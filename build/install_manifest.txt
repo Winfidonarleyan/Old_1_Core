@@ -1,0 +1,4 @@
+/home/gameserver/server/bin/authserver
+/home/gameserver/server/etc/authserver.conf.dist
+/home/gameserver/server/bin/worldserver
+/home/gameserver/server/etc/worldserver.conf.dist

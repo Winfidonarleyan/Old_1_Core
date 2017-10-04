@@ -1,0 +1,33 @@
+--- src/server/scripts/Commands/cs_account.cpp
++++ src/server/scripts/Commands/cs_account.cpp
+@@ -27,6 +27,30 @@
+ #include "Language.h"
+ #include "Player.h"
+ #include "ScriptMgr.h"
++#include "Guild.h"
++#include "GuildMgr.h"
++
++void UpdateLevel(Player* player) {
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result) {
++	     Field *fields = result->Fetch();
++		 uint16 level = fields[0].GetUInt16();
++		 uint32 xp = fields[1].GetUInt32();
++		 
++		 QueryResult knowLevel = CharacterDatabase.PQuery("SELECT level FROM guild_xp_table WHERE xp > %u", xp);
++		 if (knowLevel)
++		 {
++			Field *fs = knowLevel->Fetch();
++			uint16 gLevel = fs[0].GetUInt16();
++			CharacterDatabase.PQuery("UPDATE guild_level SET level = %u WHERE guild = %u",gLevel, guild);
++		 }
++ 
++		}
++
++		sGuildMgr->LoadGuilds();
++
++	}
+ 
+ class account_commandscript : public CommandScript
+ {

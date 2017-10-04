@@ -1,0 +1,120 @@
+--- src/server/game/Guilds/Guild.cpp
++++ src/server/game/Guilds/Guild.cpp
+@@ -1579,6 +1585,35 @@
+         return;
+ 
+     AddMember(player->GetGUID());
++	
++		uint32 guild = GetId();
++	std::string name = player->GetName();
++	QueryResult result = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result) {
++		do {
++		Field* fields = result->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->learnSpell(spellortitle, false);
++		else player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle));
++		}
++		while (result->NextRow());
++		}
++		
++	uint32 number;
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number) VALUES (%u, '%s', 0, 0, 10000)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++    if (result3) return;
++
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		}
++	CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number) VALUES (%u, '%s', 0, 0, %u)", guild, name.c_str(), number+1);
+ }
+ 
+ void Guild::HandleLeaveMember(WorldSession* session)
+@@ -1597,6 +1632,26 @@
+             // Guild is disbanded if leader leaves.
+             Disband();
+             disband = true;
++			
++					uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->removeSpell(spellortitle);
++		else
++		{
++			player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!player->HasTitle(player->GetInt32Value(PLAYER_CHOSEN_TITLE))) player->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		while (result2->NextRow());
++		}
++		
++		CharacterDatabase.PQuery("DELETE FROM guild_learn_spell WHERE guild = %u", guild);
+         }
+     }
+     else
+@@ -1607,6 +1662,24 @@
+         _BroadcastEvent(GE_LEFT, player->GetGUID(), player->GetName().c_str());
+ 
+         SendCommandResult(session, GUILD_COMMAND_QUIT, ERR_GUILD_COMMAND_SUCCESS, m_name);
++		
++		uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->removeSpell(spellortitle);
++		else
++		{
++			player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!player->HasTitle(player->GetInt32Value(PLAYER_CHOSEN_TITLE))) player->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		while (result2->NextRow());
++		}
+     }
+ 
+     sCalendarMgr->RemovePlayerGuildEventsAndSignups(player->GetGUID(), GetId());
+@@ -1639,6 +1712,29 @@
+                 DeleteMember(guid, false, true);
+                 _LogEvent(GUILD_EVENT_LOG_UNINVITE_PLAYER, player->GetGUIDLow(), GUID_LOPART(guid));
+                 _BroadcastEvent(GE_REMOVED, 0, name.c_str(), player->GetName().c_str());
++				
++						uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) 
++		{
++		if (onlinePlayer->IsInWorld()) {
++		if (isSpell == 1) onlinePlayer->removeSpell(spellortitle);
++		else
++		{
++			onlinePlayer->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!onlinePlayer->HasTitle(onlinePlayer->GetInt32Value(PLAYER_CHOSEN_TITLE))) onlinePlayer->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		}
++		}
++		while (result2->NextRow());
++		}
+             }
+         }
+     }

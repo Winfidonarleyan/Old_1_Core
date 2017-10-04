@@ -1,0 +1,4332 @@
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index e1485b3..f18abd4 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -2951,6 +2951,22 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
+ {
+     if (xp < 1)
+         return;
++		
++		 uint32 guild = GetGuildIdFromDB(this->GetGUID());
++		QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result && xp > 0) {
++	     Field *fields = result->Fetch();
++		 uint16 level = fields[0].GetUInt16();
++		uint32 xps = fields[1].GetUInt32();
++	 
++		QueryResult knowLevel = CharacterDatabase.PQuery("SELECT level FROM guild_xp_table WHERE xp > %u", xps);
++		 if (knowLevel)
++		 {
++			Field *fs = knowLevel->Fetch();
++			uint16 gLevel = fs[0].GetUInt16();
++			xp += xp*(gLevel-1)*5/100;
++		 }
++		}
+ 
+     if (!IsAlive() && !GetBattlegroundId())
+         return;
+@@ -6879,6 +6895,29 @@ void Player::CheckAreaExploreAndOutdoor()
+     }
+ }
+ 
++uint32 Player::GetGuildRate(uint32 amount) const
++{
++if (uint32 guild = GetGuildIdFromDB(GetGUID())) {
++		QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result) 
++		{
++	     Field *fields = result->Fetch();
++	 uint16 level = fields[0].GetUInt16();
++	 uint32 xp = fields[1].GetUInt32();
++	 QueryResult knowLevel = CharacterDatabase.PQuery("SELECT level FROM guild_xp_table WHERE xp > %u", xp);
++		 if (knowLevel)
++		 {
++			Field *fs = knowLevel->Fetch();
++			uint16 gLevel = fs[0].GetUInt16();
++			amount += amount*(gLevel-1)*5/100;
++		 }
++		}
++	}
++
++		return amount;
++
++}
++
+ uint32 Player::TeamForRace(uint8 race)
+ {
+     if (ChrRacesEntry const* rEntry = sChrRacesStore.LookupEntry(race))
+@@ -7222,7 +7261,7 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+         AddPct(honor_f, GetMaxPositiveAuraModifier(SPELL_AURA_MOD_HONOR_GAIN_PCT));
+     }
+ 
+-    honor_f *= sWorld->getRate(RATE_HONOR);
++    honor_f *=  GetGuildRate(sWorld->getRate(RATE_HONOR));
+     // Back to int now
+     honor = int32(honor_f);
+     // honor - for show honor points in log
+@@ -8864,7 +8903,7 @@ void Player::SendLoot(uint64 guid, LootType loot_type)
+                     loot->FillLoot(item->GetEntry(), LootTemplates_Milling, this, true);
+                     break;
+                 default:
+-                    loot->generateMoneyLoot(item->GetTemplate()->MinMoneyLoot, item->GetTemplate()->MaxMoneyLoot);
++                    loot->generateMoneyLoot(GetGuildRate(item->GetTemplate()->MinMoneyLoot), GetGuildRate(item->GetTemplate()->MaxMoneyLoot));
+                     loot->FillLoot(item->GetEntry(), LootTemplates_Item, this, true, loot->gold != 0);
+ 
+                     // Force save the loot and money items that were just rolled
+@@ -8898,7 +8937,7 @@ void Player::SendLoot(uint64 guid, LootType loot_type)
+                     loot->FillLoot(1, LootTemplates_Creature, this, true);
+             // It may need a better formula
+             // Now it works like this: lvl10: ~6copper, lvl70: ~9silver
+-            bones->loot.gold = uint32(urand(50, 150) * 0.016f * pow(float(pLevel)/5.76f, 2.5f) * sWorld->getRate(RATE_DROP_MONEY));
++            bones->loot.gold = GetGuildRate(uint32(urand(50, 150) * 0.016f * pow(float(pLevel)/5.76f, 2.5f) * sWorld->getRate(RATE_DROP_MONEY)));
+         }
+ 
+         if (bones->lootRecipient != this)
+@@ -8938,7 +8977,7 @@ void Player::SendLoot(uint64 guid, LootType loot_type)
+                 // Generate extra money for pick pocket loot
+                 const uint32 a = urand(0, creature->getLevel()/2);
+                 const uint32 b = urand(0, getLevel()/2);
+-                loot->gold = uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY));
++                loot->gold = GetGuildRate(uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY)));
+                 permission = OWNER_PERMISSION;
+             }
+         }
+@@ -15225,7 +15264,7 @@ void Player::RewardQuest(Quest const* quest, uint32 reward, Object* questGiver,
+     if (getLevel() < sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
+         GiveXP(XP, NULL);
+     else
+-        moneyRew = int32(quest->GetRewMoneyMaxLevel() * sWorld->getRate(RATE_DROP_MONEY));
++        moneyRew = GetGuildRate(int32(quest->GetRewMoneyMaxLevel() * sWorld->getRate(RATE_DROP_MONEY)));
+ 
+     // Give player extra money if GetRewOrReqMoney > 0 and get ReqMoney if negative
+     if (quest->GetRewOrReqMoney())
+@@ -16586,7 +16625,7 @@ void Player::SendQuestReward(Quest const* quest, uint32 XP)
+     else
+     {
+         data << uint32(0);
+-        data << uint32(quest->GetRewOrReqMoney() + int32(quest->GetRewMoneyMaxLevel() * sWorld->getRate(RATE_DROP_MONEY)));
++        data << GetGuildRate(uint32(quest->GetRewOrReqMoney() + int32(quest->GetRewMoneyMaxLevel() * sWorld->getRate(RATE_DROP_MONEY))));
+     }
+ 
+     data << uint32(10 * quest->CalculateHonorGain(GetQuestLevel(quest)));
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 35a3f5f..173d7d3 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -1100,6 +1100,9 @@ class Player : public Unit, public GridObject<Player>
+ 
+         void SendInitialPacketsBeforeAddToMap();
+         void SendInitialPacketsAfterAddToMap();
++		
++		uint32 GetGuildRate(uint32 amount) const;
++		
+         void SendTransferAborted(uint32 mapid, TransferAbortReason reason, uint8 arg = 0);
+         void SendInstanceResetWarning(uint32 mapid, Difficulty difficulty, uint32 time);
+ 
+diff --git a/src/server/game/Guilds/Guild.cpp b/src/server/game/Guilds/Guild.cpp
+index c52d046..043fbe5 100644
+--- a/src/server/game/Guilds/Guild.cpp
++++ b/src/server/game/Guilds/Guild.cpp
+@@ -1177,6 +1177,8 @@ bool Guild::Create(Player* pLeader, std::string const& name)
+     PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GUILD_MEMBERS);
+     stmt->setUInt32(0, m_id);
+     trans->Append(stmt);
++	
++	CharacterDatabase.PQuery("INSERT INTO guild_level (guild, level, xp) VALUES (%u, 1, 0)", m_id);
+ 
+     uint8 index = 0;
+     stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_GUILD);
+@@ -1253,6 +1255,10 @@ void Guild::Disband()
+ 
+     CharacterDatabase.CommitTransaction(trans);
+     sGuildMgr->RemoveGuild(m_id);
++	
++	uint32 guild = GetId();
++	CharacterDatabase.PQuery("DELETE FROM guild_level WHERE guild = %u", guild);
++	CharacterDatabase.PQuery("DELETE FROM guild_level_invested WHERE guild = %u", guild);
+ }
+ 
+ void Guild::UpdateMemberData(Player* player, uint8 dataid, uint32 value)
+@@ -1573,6 +1579,35 @@ void Guild::HandleAcceptMember(WorldSession* session)
+         return;
+ 
+     AddMember(player->GetGUID());
++	
++		uint32 guild = GetId();
++	std::string name = player->GetName();
++	QueryResult result = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result) {
++		do {
++		Field* fields = result->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->learnSpell(spellortitle, false);
++		else player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle));
++		}
++		while (result->NextRow());
++		}
++		
++	uint32 number;
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number) VALUES (%u, '%s', 0, 0, 10000)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++    if (result3) return;
++
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		}
++	CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number) VALUES (%u, '%s', 0, 0, %u)", guild, name.c_str(), number+1);
+ }
+ 
+ void Guild::HandleLeaveMember(WorldSession* session)
+@@ -1591,6 +1626,26 @@ void Guild::HandleLeaveMember(WorldSession* session)
+             // Guild is disbanded if leader leaves.
+             Disband();
+             disband = true;
++			
++					uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->removeSpell(spellortitle);
++		else
++		{
++			player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!player->HasTitle(player->GetInt32Value(PLAYER_CHOSEN_TITLE))) player->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		while (result2->NextRow());
++		}
++		
++		CharacterDatabase.PQuery("DELETE FROM guild_learn_spell WHERE guild = %u", guild);
+         }
+     }
+     else
+@@ -1601,6 +1656,24 @@ void Guild::HandleLeaveMember(WorldSession* session)
+         _BroadcastEvent(GE_LEFT, player->GetGUID(), player->GetName().c_str());
+ 
+         SendCommandResult(session, GUILD_COMMAND_QUIT, ERR_GUILD_COMMAND_SUCCESS, m_name);
++		
++		uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++		
++		if (isSpell == 1) player->removeSpell(spellortitle);
++		else
++		{
++			player->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!player->HasTitle(player->GetInt32Value(PLAYER_CHOSEN_TITLE))) player->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		while (result2->NextRow());
++		}
+     }
+ 
+     sCalendarMgr->RemovePlayerGuildEventsAndSignups(player->GetGUID(), GetId());
+@@ -1633,6 +1706,29 @@ void Guild::HandleRemoveMember(WorldSession* session, std::string const& name)
+                 DeleteMember(guid, false, true);
+                 _LogEvent(GUILD_EVENT_LOG_UNINVITE_PLAYER, player->GetGUIDLow(), GUID_LOPART(guid));
+                 _BroadcastEvent(GE_REMOVED, 0, name.c_str(), player->GetName().c_str());
++				
++						uint32 guild = GetId();
++	    QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle, isSpell FROM guild_learn_spell WHERE guild = %u", guild);
++	    if (result2) {
++		do {
++		Field* fields = result2->Fetch();
++	    uint32 spellortitle = fields[0].GetUInt32();
++		uint32 isSpell = fields[1].GetUInt32();
++
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) 
++		{
++		if (onlinePlayer->IsInWorld()) {
++		if (isSpell == 1) onlinePlayer->removeSpell(spellortitle);
++		else
++		{
++			onlinePlayer->SetTitle(sCharTitlesStore.LookupEntry(spellortitle), true);
++			if (!onlinePlayer->HasTitle(onlinePlayer->GetInt32Value(PLAYER_CHOSEN_TITLE))) onlinePlayer->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++		}
++		}
++		}
++		}
++		while (result2->NextRow());
++		}
+             }
+         }
+     }
+@@ -1943,7 +2039,23 @@ void Guild::SendLoginInfo(WorldSession* session)
+ bool Guild::LoadFromDB(Field* fields)
+ {
+     m_id            = fields[0].GetUInt32();
+-    m_name          = fields[1].GetString();
++	QueryResult resul = CharacterDatabase.PQuery("SELECT level, color FROM guild_level WHERE guild = %u", m_id);
++	if (resul) 
++	{
++		std::ostringstream m_nam;
++		Field *field = resul->Fetch();
++		uint16 leve = field[0].GetUInt16();
++		std::string color = field[1].GetString();
++		if (color != "") m_nam << color;
++		else m_nam << "";
++		m_nam << fields[1].GetString();
++		if (color != "") m_nam << "|r (";
++		else m_nam << " (";
++		m_nam << leve;
++		m_nam << " yp.)";
++		m_name = m_nam.str().c_str();
++	}
++    else m_name          = fields[1].GetString();
+     m_leaderGuid    = MAKE_NEW_GUID(fields[2].GetUInt32(), 0, HIGHGUID_PLAYER);
+     m_emblemInfo.LoadFromDB(fields);
+     m_info          = fields[8].GetString();
+diff --git a/src/server/game/Handlers/MiscHandler.cpp b/src/server/game/Handlers/MiscHandler.cpp
+index 4da0d82..93e8a04 100644
+--- a/src/server/game/Handlers/MiscHandler.cpp
++++ b/src/server/game/Handlers/MiscHandler.cpp
+@@ -192,6 +192,21 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
+ 
+     recvData >> guild_name;                                // guild name, case sensitive...
+ 
++	Guild* _guild = sGuildMgr->GetGuildByName(guild_name);
++	if (_guild)
++	{
++	QueryResult resul = CharacterDatabase.PQuery("SELECT level FROM guild_level WHERE guild = %u", _guild->GetId());
++		if (resul) 
++		{
++			Field *field = resul->Fetch();
++			uint16 leve = field[0].GetUInt16();
++
++			guild_name += ": ";
++			guild_name += leve;
++			guild_name += " level";
++		}
++	}
++	
+     recvData >> racemask;                                  // race mask
+     recvData >> classmask;                                 // class mask
+     recvData >> zones_count;                               // zones count, client limit = 10 (2.0.10)
+diff --git a/src/server/scripts/Commands/cs_account.cpp b/src/server/scripts/Commands/cs_account.cpp
+index 6e9dbea..9b5e5c2 100644
+--- a/src/server/scripts/Commands/cs_account.cpp
++++ b/src/server/scripts/Commands/cs_account.cpp
+@@ -27,6 +27,30 @@ EndScriptData */
+ #include "Language.h"
+ #include "Player.h"
+ #include "ScriptMgr.h"
++#include "Guild.h"
++#include "GuildMgr.h"
++
++void UpdateLevel(Player* player) {
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result) {
++	     Field *fields = result->Fetch();
++		 uint16 level = fields[0].GetUInt16();
++		 uint32 xp = fields[1].GetUInt32();
++		 
++		 QueryResult knowLevel = CharacterDatabase.PQuery("SELECT level FROM guild_xp_table WHERE xp > %u", xp);
++		 if (knowLevel)
++		 {
++			Field *fs = knowLevel->Fetch();
++			uint16 gLevel = fs[0].GetUInt16();
++			CharacterDatabase.PQuery("UPDATE guild_level SET level = %u WHERE guild = %u",gLevel, guild);
++		 }
++ 
++		}
++
++		sGuildMgr->LoadGuilds();
++
++	}
+ 
+ class account_commandscript : public CommandScript
+ {
+@@ -942,7 +966,3978 @@ public:
+     }
+ };
+ 
++class item_tpguild : public ItemScript
++{
++public:
++	item_tpguild() : ItemScript("item_tpguild") { }
++	
++	bool OnUse(Player* player, Item* item, SpellCastTargets const& /*targets*/) 
++	{
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT x, y, z, map FROM guildhouses WHERE guild = %u", guild);
++		if (result && !player->IsInCombat()) 
++		{
++			float x,y,z;
++			uint32 map;
++			std::string name;
++
++				Field* fields = result->Fetch();
++			    x = fields[0].GetFloat();
++			    y = fields[1].GetFloat();
++				z = fields[2].GetFloat();
++				map = fields[3].GetUInt32();
++
++				player->TeleportTo(map,x,y,z,0.0f,0U);
++				player->RemoveSpellCooldown(8690, true);
++				player->SetPhaseMask(1, true);
++		}
++
++		return true;
++	}
++	
++};
++
++class npc_guild_level : public CreatureScript
++
++{
++
++    public: 
++
++    npc_guild_level() : CreatureScript("npc_guild_level") {}
++
++	bool OnGossipHello(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	uint32 guild = player->GetGuildId();
++	uint16 level;
++	if (!guild) {
++		player->SEND_GOSSIP_MENU(55004, creature->GetGUID());
++	return false;
++	}
++    QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result) {
++	     Field *fields = result->Fetch();
++		 level = fields[0].GetUInt16();
++		 if (level < 30) {
++		 std::ostringstream temb;
++		 temb << "|TInterface/ICONS/INV_Inscription_ArmorScroll02:32:32:-18:0|tП";
++		 std::ostringstream femb;
++		 femb << "|TInterface/ICONS/INV_Sword_131:32:32:-18:0|tПожертвовать 1 эмблему (10 опыта гильдии)";
++	std::ostringstream hnr;
++    hnr << "|TInterface/ICONS/Achievement_BG_kill_flag_carrierEOS:32:32:-18:0|tПожертвовать очки чести для гильдии";
++	std::ostringstream arn;
++    arn << "|TInterface/ICONS/Achievement_Arena_2v2_1:32:32:-18:0|tПожертвовать очки арены для гильдии";
++	std::ostringstream gld;
++    gld << "|TInterface/ICONS/Achievement_Reputation_02:32:32:-18:0|tПожертвовать золото для гильдии";
++	//player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, temb.str(), GOSSIP_SENDER_MAIN, 35);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, femb.str(), GOSSIP_SENDER_MAIN, 36);
++	player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_MONEY_BAG, gld.str(), GOSSIP_SENDER_MAIN, 200, "Введите сумму, которую хотите пожертвовать, 5 000 золота = 10 опыта гильдии", 0, true);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, hnr.str(), GOSSIP_SENDER_MAIN, 1);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, arn.str(), GOSSIP_SENDER_MAIN, 2);
++	}
++	}
++
++		if (player->GetRank() == 0)
++		{
++			std::ostringstream clr;
++		    clr << "|TInterface/ICONS/Spell_Magic_ManaGain:32:32:-18:0|tСменить цвет названия ги";
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, clr.str(), GOSSIP_SENDER_MAIN, 24);
++		}
++	std::ostringstream prg;
++    prg << "|TInterface/ICONS/Spell_Magic_ManaGain:32:32:-18:0|tПрогресс моей гильдии";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, prg.str(), GOSSIP_SENDER_MAIN, 3);
++	std::ostringstream gsr;
++    gsr << "|TInterface/ICONS/Spell_Shadow_Fumble:32:32:-18:0|tТОП гильдий с уровнями";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, gsr.str(), GOSSIP_SENDER_MAIN, 13);
++	std::ostringstream vlg;
++    vlg << "|TInterface/ICONS/Temp:32:32:-18:0|tСписок вложивших в гильдию";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_MONEY_BAG, vlg.str(), GOSSIP_SENDER_MAIN, 9914);
++	
++	std::ostringstream vxd;
++    vxd << "|TInterface/ICONS/Spell_ChargeNegative:32:32:-18:0|tВыход";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, vxd.str(), GOSSIP_SENDER_MAIN, 4);
++	player->SEND_GOSSIP_MENU(55000, creature->GetGUID());
++
++	return true;
++	}
++
++	void InvestedRoster(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	//player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "ТОП вложивших в гильдию свитков", GOSSIP_SENDER_MAIN, 9917);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "ТОП вложивших в гильдию эмблем", GOSSIP_SENDER_MAIN, 9918);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "ТОП вложивших в гильдию очков чести", GOSSIP_SENDER_MAIN, 9915);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "ТОП вложивших в гильдию очков арены", GOSSIP_SENDER_MAIN, 9916);
++	//player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "ТОП вложивших в гильдию золота", GOSSIP_SENDER_MAIN, 9000);
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	void InvestedRosterGold1(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, gold, number FROM guild_level_invested WHERE gold > 0 AND guild = %u ORDER BY honor DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 gold;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			gold = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 30) break;
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << gold << " золота" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	void InvestedSvitok(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, svitok, number FROM guild_level_invested WHERE svitok > 0 AND guild = %u ORDER BY svitok DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 svitok;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			svitok = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 50) {
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << svitok << " свитков" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	void InvestedToken(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, token, number FROM guild_level_invested WHERE token > 0 AND guild = %u ORDER BY token DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 token;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			token = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 50) {
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << token << " эмблем" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	void InvestedRosterHonor1(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, honor, number FROM guild_level_invested WHERE honor > 0 AND guild = %u ORDER BY honor DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 honor;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			honor = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 30) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 9910);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << honor << " чести" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void InvestedRosterHonor2(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 9911);
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, honor, number FROM guild_level_invested WHERE honor > 0 AND guild = %u ORDER BY honor DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 honor;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++			if (go < 30) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			honor = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 60) break;
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << honor << " чести" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	void InvestedRosterArena1(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, arena, number FROM guild_level_invested WHERE arena > 0 AND guild = %u ORDER BY arena DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 arena;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			arena = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 30) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 9912);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << arena << " арены" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void InvestedRosterArena2(Player* player, Creature* creature) {
++	    player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 9913);
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, arena, number FROM guild_level_invested WHERE arena > 0 AND guild = %u ORDER BY arena DESC", guild);
++		if (result) {
++			std::string name;
++			uint32 arena;
++			uint64 number;
++			uint16 go = 0;
++	    do {
++			if (go < 30) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++			name = fields[0].GetString();
++			arena = fields[1].GetUInt32();
++			number = fields[2].GetUInt64();
++
++			if (go == 60) break;
++			std::stringstream buffer;
++            buffer << "Игрок: " << "|cff790C06" << name << "|r" << " вложил " << "|cFF1E90FF" << arena << " арены" << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, number);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++
++
++	void UpdateLevelCost(Player* player) {
++		uint32 guild = player->GetGuildId();
++	    QueryResult result10 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result10) {
++	     Field *fields = result10->Fetch();
++		 uint16 level = fields[0].GetUInt16();
++		 uint32 xp = fields[1].GetUInt32();
++		 
++		 QueryResult knowLevel = CharacterDatabase.PQuery("SELECT level FROM guild_xp_table WHERE xp > %u", xp);
++		 if (knowLevel)
++		 {
++			Field *fs = knowLevel->Fetch();
++			uint16 gLevel = fs[0].GetUInt16();
++			CharacterDatabase.PQuery("UPDATE guild_level SET level = %u WHERE guild = %u",gLevel, guild);
++		 }
++		 
++		}
++	}
++
++	
++
++	void SelectSpell5(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 5");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void SelectSpell10(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 10");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void SelectSpell15(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 15");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void SelectSpell20(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 20");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void SelectSpell25(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 25");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void SelectSpell30(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, number FROM guild_level_spell WHERE level = 30");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++	    if (result15) {
++		Field* fields = result15->Fetch();
++	    uint16 level = fields[0].GetUInt16();
++		uint32 xp = fields[1].GetUInt32();
++		if (xp >= cost) {
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-%u WHERE guild = %u", cost, guild);
++
++		UpdateLevelCost(player);
++		}
++		else {
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++		return;
++		}
++
++		}
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			onlinePlayer->learnSpell(spell, false);
++		}
++		else CharacterDatabase.PQuery("REPLACE INTO character_spell (guid, spell, active, disabled) VALUES (%u, %u, 1, 0)", guid, spell);
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spell) VALUES (%u, %u)", guild, spell);
++
++
++		}
++		while (result2->NextRow());
++		
++		}
++
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++	}
++
++	}
++	while (result->NextRow());
++	}
++	
++	}
++
++	void ReplaceColorList(Player* player, Creature* creature) 
++	{
++	player->PlayerTalkClass->ClearMenus();
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Красный", GOSSIP_SENDER_MAIN, 25);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Синий", GOSSIP_SENDER_MAIN, 26);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Чёрный", GOSSIP_SENDER_MAIN, 27);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Белый", GOSSIP_SENDER_MAIN, 28);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Зелёный", GOSSIP_SENDER_MAIN, 29);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, "Сменить цвет на Желтый", GOSSIP_SENDER_MAIN, 30);
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void ReplaceColor(Player* player, Creature* creature, uint32 color)
++	{
++		switch(color)
++		{
++		case 1:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cffFF0000' WHERE guild = %u", player->GetGuildId());
++			break;
++		case 2:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cff0000FF' WHERE guild = %u", player->GetGuildId());
++			break;
++		case 3:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cff000000' WHERE guild = %u", player->GetGuildId());
++			break;
++		case 4:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cffFFFFFF' WHERE guild = %u", player->GetGuildId());
++			break;
++		case 5:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cff00FF00' WHERE guild = %u", player->GetGuildId());
++			break;
++		case 6:
++			CharacterDatabase.PExecute("UPDATE guild_level SET color = '|cffFFFF00' WHERE guild = %u", player->GetGuildId());
++			break;
++
++		}
++		sGuildMgr->LoadGuilds();
++		player->GetSession()->SendAreaTriggerMessage("Вы успешно сменили цвет названия гильдии!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void BuySpell10(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов:", GOSSIP_SENDER_MAIN, 9900);
++	uint32 spell;
++	uint32 cost;
++	uint16 level;
++	uint32 number;
++	uint32 faction;
++	char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, level, number, faction FROM guild_level_spell WHERE level = 10");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	level = fields[2].GetUInt16();
++	number = fields[3].GetUInt32();
++	faction = fields[4].GetUInt32();
++	
++	if (player->HasSpell(spell)) continue;
++
++	if (player->GetTeam() == TEAM_ALLIANCE && faction == 2) continue;
++
++	if (player->GetTeam() == TEAM_HORDE && faction == 1) continue;
++	const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++	name = (spellEntry->SpellName[8]);
++
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " опыта." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++
++	void BuySpell15(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов:", GOSSIP_SENDER_MAIN, 9901);
++	uint32 spell;
++	uint32 cost;
++	uint16 level;
++	uint32 number;
++	uint32 faction;
++	char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, level, number, faction FROM guild_level_spell WHERE level = 15");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	level = fields[2].GetUInt16();
++	number = fields[3].GetUInt32();
++	faction = fields[4].GetUInt32();
++	
++	if (player->HasSpell(spell)) continue;
++
++	if (player->GetTeam() == TEAM_ALLIANCE && faction == 2) continue;
++
++	if (player->GetTeam() == TEAM_HORDE && faction == 1) continue;
++	const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++	name = (spellEntry->SpellName[8]);
++
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " опыта." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++
++	void BuySpell20(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов:", GOSSIP_SENDER_MAIN, 9902);
++	uint32 spell;
++	uint32 cost;
++	uint16 level;
++	uint32 number;
++	uint32 faction;
++	char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, level, number, faction FROM guild_level_spell WHERE level = 20");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	level = fields[2].GetUInt16();
++	number = fields[3].GetUInt32();
++	faction = fields[4].GetUInt32();
++	
++	if (player->HasSpell(spell)) continue;
++
++	if (player->GetTeam() == TEAM_ALLIANCE && faction == 2) continue;
++
++	if (player->GetTeam() == TEAM_HORDE && faction == 1) continue;
++	const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++	name = (spellEntry->SpellName[8]);
++
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " опыта." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++	void BuySpell25(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов:", GOSSIP_SENDER_MAIN, 9903);
++	uint32 spell;
++	uint32 cost;
++	uint16 level;
++	uint32 number;
++	uint32 faction;
++	char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, level, number, faction FROM guild_level_spell WHERE level = 25");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	level = fields[2].GetUInt16();
++	number = fields[3].GetUInt32();
++	faction = fields[4].GetUInt32();
++	
++	if (player->HasSpell(spell)) continue;
++
++	if (player->GetTeam() == TEAM_ALLIANCE && faction == 2) continue;
++
++	if (player->GetTeam() == TEAM_HORDE && faction == 1) continue;
++	const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++	name = (spellEntry->SpellName[8]);
++
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " опыта." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++
++	void BuySpell30(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов:", GOSSIP_SENDER_MAIN, 9904);
++	uint32 spell;
++	uint32 cost;
++	uint16 level;
++	uint32 number;
++	uint32 faction;
++	char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spell, cost, level, number, faction FROM guild_level_spell WHERE level = 30");
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	level = fields[2].GetUInt16();
++	number = fields[3].GetUInt32();
++	faction = fields[4].GetUInt32();
++	
++	if (player->HasSpell(spell)) continue;
++
++	if (player->GetTeam() == TEAM_ALLIANCE && faction == 2) continue;
++
++	if (player->GetTeam() == TEAM_HORDE && faction == 1) continue;
++	const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++	name = (spellEntry->SpellName[8]);
++
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " опыта." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++
++	void CurrentSpellsMenu(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Доступные уровни заклинаний:", GOSSIP_SENDER_MAIN, 9905);
++	uint32 guild = player->GetGuildId();
++	uint16 level;
++	QueryResult result = CharacterDatabase.PQuery("SELECT level FROM guild_level WHERE guild = %u", guild);
++	if (result)		{
++	Field* fields = result->Fetch();
++	level = fields[0].GetUInt16();
++	}
++	
++	uint32 spell;
++	if (level >= 5) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 5");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 5-го уровня", GOSSIP_SENDER_MAIN, 24);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++
++	if (level >= 10) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 10");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 10-го уровня", GOSSIP_SENDER_MAIN, 25);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++
++	if (level >= 15) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 15");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 15-го уровня", GOSSIP_SENDER_MAIN, 26);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++
++	if (level >= 20) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 20");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 20-го уровня", GOSSIP_SENDER_MAIN, 27);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++
++	if (level >= 25) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 25");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 25-го уровня", GOSSIP_SENDER_MAIN, 28);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++
++	if (level >= 30) {
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM guild_level_spell WHERE level = 30");
++	if (result2) {
++	do {
++	Field* fields = result2->Fetch();
++	spell = fields[0].GetUInt32();
++	if (!player->HasSpell(spell)) {
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Заклинания 30-го уровня", GOSSIP_SENDER_MAIN, 29);
++		break;
++	}
++	}
++	while (result2->NextRow());
++	}
++	}
++	
++	
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void AllGuilds1(Player* player, Creature* creature) {
++		player->PlayerTalkClass->ClearMenus();
++		uint32 count;
++		QueryResult result3 = CharacterDatabase.PQuery("SELECT COUNT(guild) FROM guild_level WHERE level > 1");
++		if (result3) {
++		Field* fields = result3->Fetch();
++		count = fields[0].GetUInt32();
++		}
++		QueryResult result = CharacterDatabase.PQuery("SELECT guild, level FROM guild_level WHERE level > 1 ORDER BY level DESC");
++		if (result) {
++			std::string name;
++			std::string gleader;
++			uint32 guild;
++			uint16 level;
++			uint16 go = 0;
++			uint64 leaderguid;
++	    do {
++		    Field* fields = result->Fetch();
++            guild = fields[0].GetUInt32();
++			level = fields[1].GetUInt16();
++			QueryResult result3 = CharacterDatabase.PQuery("SELECT name, leaderguid FROM guild WHERE guildid = %u", guild);
++			if (result3) {
++			Field* fields = result3->Fetch();
++			name = fields[0].GetString();
++			leaderguid = fields[1].GetUInt64();
++			}
++			QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM characters WHERE guid = %u", leaderguid);
++			if (result4) {
++			Field* fields = result4->Fetch();
++			gleader = fields[0].GetString();
++			}
++			if (go == 10) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 14);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "|cff084E13" << name << "|r" << ". Уровень: " << "|cFF1E90FF" << level << "|r" << ". ГМ: " << "|cff790C06" << gleader << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, guild+100);
++
++		    go++;
++			
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++		void AllGuilds2(Player* player, Creature* creature) {
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 19);
++		QueryResult result = CharacterDatabase.PQuery("SELECT guild, level FROM guild_level WHERE level > 1 ORDER BY level DESC");
++		if (result) {
++			std::string name;
++			std::string gleader;
++			uint32 guild;
++			uint16 level;
++			uint16 go = 0;
++			uint64 leaderguid;
++	    do {
++			if (go < 10) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++            guild = fields[0].GetUInt32();
++			level = fields[1].GetUInt16();
++			QueryResult result3 = CharacterDatabase.PQuery("SELECT name, leaderguid FROM guild WHERE guildid = %u", guild);
++			if (result3) {
++			Field* fields = result3->Fetch();
++			name = fields[0].GetString();
++			leaderguid = fields[1].GetUInt64();
++			}
++			QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM characters WHERE guid = %u", leaderguid);
++			if (result4) {
++			Field* fields = result4->Fetch();
++			gleader = fields[0].GetString();
++			}
++			if (go == 20) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше =>", GOSSIP_SENDER_MAIN, 15);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "|cff084E13" << name << "|r" << ". Уровень: " << "|cFF1E90FF" << level << "|r" << ". ГМ: " << "|cff790C06" << gleader << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, guild+1000);
++			
++			go++;
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++		void AllGuilds3(Player* player, Creature* creature) {
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 20);
++		QueryResult result = CharacterDatabase.PQuery("SELECT guild, level FROM guild_level WHERE level > 1 ORDER BY level DESC");
++		if (result) {
++			std::string name;
++			std::string gleader;
++			uint32 guild;
++			uint16 level;
++			uint16 go = 0;
++			uint64 leaderguid;
++	    do {
++			if (go < 20) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++            guild = fields[0].GetUInt32();
++			level = fields[1].GetUInt16();
++			QueryResult result3 = CharacterDatabase.PQuery("SELECT name, leaderguid FROM guild WHERE guildid = %u", guild);
++			if (result3) {
++			Field* fields = result3->Fetch();
++			name = fields[0].GetString();
++			leaderguid = fields[1].GetUInt64();
++			}
++			QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM characters WHERE guid = %u", leaderguid);
++			if (result4) {
++			Field* fields = result4->Fetch();
++			gleader = fields[0].GetString();
++			}
++			if (go == 30) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше =>", GOSSIP_SENDER_MAIN, 16);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "|cff084E13" << name << "|r" << ". Уровень: " << "|cFF1E90FF" << level << "|r" << ". ГМ: " << "|cff790C06" << gleader << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, guild+2000);
++			go++;
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++		void AllGuilds4(Player* player, Creature* creature) {
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 21);
++		QueryResult result = CharacterDatabase.PQuery("SELECT guild, level FROM guild_level WHERE level > 1 ORDER BY level DESC");
++		if (result) {
++			std::string name;
++			std::string gleader;
++			uint32 guild;
++			uint16 level;
++			uint16 go = 0;
++			uint64 leaderguid;
++	    do {
++			if (go < 30) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++            guild = fields[0].GetUInt32();
++			level = fields[1].GetUInt16();
++			QueryResult result3 = CharacterDatabase.PQuery("SELECT name, leaderguid FROM guild WHERE guildid = %u", guild);
++			if (result3) {
++			Field* fields = result3->Fetch();
++			name = fields[0].GetString();
++			leaderguid = fields[1].GetUInt64();
++			}
++			QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM characters WHERE guid = %u", leaderguid);
++			if (result4) {
++			Field* fields = result4->Fetch();
++			gleader = fields[0].GetString();
++			}
++			if (go == 40) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше =>", GOSSIP_SENDER_MAIN, 17);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "|cff084E13" << name << "|r" << ". Уровень: " << "|cFF1E90FF" << level << "|r" << ". ГМ: " << "|cff790C06" << gleader << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, guild+3000);
++			go++;
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++		void AllGuilds5(Player* player, Creature* creature) {
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 22);
++		QueryResult result = CharacterDatabase.PQuery("SELECT guild, level FROM guild_level WHERE level > 1 ORDER BY level DESC");
++		if (result) {
++			std::string name;
++			std::string gleader;
++			uint32 guild;
++			uint16 level;
++			uint16 go = 0;
++			uint64 leaderguid;
++	    do {
++			if (go < 40) {
++	        go++;
++			continue;
++			}
++		    Field* fields = result->Fetch();
++            guild = fields[0].GetUInt32();
++			level = fields[1].GetUInt16();
++			QueryResult result3 = CharacterDatabase.PQuery("SELECT name, leaderguid FROM guild WHERE guildid = %u", guild);
++			if (result3) {
++			Field* fields = result3->Fetch();
++			name = fields[0].GetString();
++			leaderguid = fields[1].GetUInt64();
++			}
++			QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM characters WHERE guid = %u", leaderguid);
++			if (result4) {
++			Field* fields = result4->Fetch();
++			gleader = fields[0].GetString();
++			}
++			if (go == 50) {
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Конец", GOSSIP_SENDER_MAIN, 18);
++			break;
++			}
++			std::stringstream buffer;
++            buffer << "|cff084E13" << name << "|r" << ". Уровень: " << "|cFF1E90FF" << level << "|r" << ". ГМ: " << "|cff790C06" << gleader << "|r";
++			player->ADD_GOSSIP_ITEM(4, buffer.str(), GOSSIP_SENDER_MAIN, guild+4000);
++			go++;
++		} while (result->NextRow());
++		
++
++		}
++
++
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void TakeHonorButtons(Player* player, Creature* creature) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++
++	player->PlayerTalkClass->ClearMenus();
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 2 000 чести (+10 опыта)", GOSSIP_SENDER_MAIN, 5);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 10 000 чести (+50 опыта)", GOSSIP_SENDER_MAIN, 6);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 20 000 чести (+100 опыта)", GOSSIP_SENDER_MAIN, 7);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 30 000 чести (+150 опыта)", GOSSIP_SENDER_MAIN, 8);
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void TakeGold(Player* player, Creature* creature, char const* code)
++	{
++		int32 gold = atoi(code)*10000;
++		if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetMoney() < 5000*10000) {
++		player->GetSession()->SendNotification("У вас недостаточно золота!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++    uint32 axp = gold/50/10000;
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+%u WHERE guild = %u",axp, guild);
++	std::string name = player->GetName();
++
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET gold = gold+%u WHERE guild = %u AND name = '%s'",gold/10000, guild, name.c_str());
++	player->ModifyMoney(-gold);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++		
++	}
++	
++	void TakeArena10000(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetArenaPoints() < 1500) {
++		player->GetSession()->SendNotification("У вас недостаточно очков арены!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+150 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET arena = arena+1500 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyArenaPoints(-1500);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeArena7500(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetArenaPoints() < 1000) {
++		player->GetSession()->SendNotification("У вас недостаточно очков арены!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+100 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET arena = arena+1000 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyArenaPoints(-1000);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeArena5000(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetArenaPoints() < 500) {
++		player->GetSession()->SendNotification("У вас недостаточно очков арены!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+50 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET arena = arena+500 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyArenaPoints(-500);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeArena2500(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetArenaPoints() < 100) {
++		player->GetSession()->SendNotification("У вас недостаточно очков арены!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+10 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET arena = arena+100 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyArenaPoints(-100);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeHonor200(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetHonorPoints() < 30000) {
++		player->GetSession()->SendNotification("У вас недостаточно очков чести!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+150 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET honor = honor+30000 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyHonorPoints(-30000);
++	UpdateLevel(player);
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeHonor150(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetHonorPoints() < 20000) {
++		player->GetSession()->SendNotification("У вас недостаточно очков чести!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+100 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET honor = honor+20000 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyHonorPoints(-20000);
++
++	UpdateLevel(player);
++
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeHonor100(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetHonorPoints() < 10000) {
++		player->GetSession()->SendNotification("У вас недостаточно очков чести!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+50 WHERE guild = %u", guild);
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET honor = honor+10000 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyHonorPoints(-10000);
++	UpdateLevel(player);
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void TakeFrostEmblem(Player* player)
++	{
++		if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++		}
++		
++		if (!player->HasItemCount(49426, 1, true)) {
++		player->GetSession()->SendNotification("У вас недостаточно эмблем!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++		}
++		uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+10 WHERE guild = %u", guild);
++
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET token = token+1 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->DestroyItemCount(49426, 1, true);
++	UpdateLevel(player);
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++	
++	void TakeTriumphEmblem(Player* player)
++	{
++		if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++		}
++		
++		if (!player->HasItemCount(18228, 50, true)) {
++		player->GetSession()->SendNotification("У вас недостаточно свитков!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++		}
++		uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+10 WHERE guild = %u", guild);
++
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET svitok = svitok+50 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->DestroyItemCount(18228, 50, true);
++	UpdateLevel(player);
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++	
++	void TakeHonor50(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	if (player->GetHonorPoints() < 2000) {
++		player->GetSession()->SendNotification("У вас недостаточно очков чести!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	uint32 guild = player->GetGuildId();
++	CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+10 WHERE guild = %u", guild);
++
++	std::string name = player->GetName();
++	QueryResult result4 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested");
++	if (!result4) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, 10000, 0, 0, 0)", guild, name.c_str());
++
++	QueryResult result3 = CharacterDatabase.PQuery("SELECT name FROM guild_level_invested WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	uint32 number;
++	QueryResult result2 = CharacterDatabase.PQuery("SELECT MAX(number) FROM guild_level_invested");
++	    if (result2) {
++		Field* fields = result2->Fetch();
++	    number = fields[0].GetUInt32();
++		if (!result3) CharacterDatabase.PQuery("REPLACE INTO guild_level_invested (guild, name, honor, arena, number, gold, svitok, token) VALUES (%u, '%s', 0, 0, %u, 0)", guild, name.c_str(), number+1);
++		}
++	CharacterDatabase.PQuery("UPDATE guild_level_invested SET honor = honor+2000 WHERE guild = %u AND name = '%s'", guild, name.c_str());
++	player->ModifyHonorPoints(-2000);
++	UpdateLevel(player);
++		player->GetSession()->SendAreaTriggerMessage("Пожертвование прошло успешно!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++	
++	
++
++	void TakeArenaButtons(Player* player, Creature* creature) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++
++	player->PlayerTalkClass->ClearMenus();
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 100 арены (+10 опыта)", GOSSIP_SENDER_MAIN, 9);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 500 арены (+50 опыта)", GOSSIP_SENDER_MAIN, 10);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 1000 арены (+100 опыта)", GOSSIP_SENDER_MAIN, 11);
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Пожертвовать гильдии 1500 арены (+150 опыта)", GOSSIP_SENDER_MAIN, 12);
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void GuildInfo(Player* player) {
++	if (!player->GetGuildId()) {
++		player->GetSession()->SendNotification("Вы не состоите в гильдии!");
++	    player->CLOSE_GOSSIP_MENU();
++		return;
++	}
++	    uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		if (result) {
++	     Field *fields = result->Fetch();
++		 uint16 level = fields[0].GetUInt16();
++		 uint32 xp = fields[1].GetUInt32();
++
++		 ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eУровень вашей гильдии:|r |cfffcedbb%u|r", level);
++		 ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eПрогресс уровня вашей гильдии:|r |cfffcedbb%u|r", xp);
++
++		QueryResult result1 = CharacterDatabase.PQuery("SELECT xp FROM guild_xp_table WHERE level = %u", level);
++		if (result1) {
++		Field *fields = result1->Fetch();
++		uint32 reqXp = fields[0].GetUInt32();
++		uint32 ReqXp = reqXp-xp;
++		if (level < 30) ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eДо %u-го уровня гильдии осталось накопить:|r |cfffcedbb%u опыта|r", level+1, ReqXp);
++		else ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eВаша гильдия имеет максимальный уровень!|r");
++
++		}
++
++		}
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) {
++            switch (action) {
++			case 1:
++			TakeHonorButtons(player, creature);
++			break;
++			case 2:
++            TakeArenaButtons(player, creature);
++			break;
++			case 3:
++			GuildInfo(player);
++			break;
++			case 4:
++			player->CLOSE_GOSSIP_MENU();
++			break;
++			case 5:
++			TakeHonor50(player);
++		    break;
++			case 6:
++			TakeHonor100(player);
++		    break;
++			case 7:
++			TakeHonor150(player);
++		    break;
++			case 8:
++            TakeHonor200(player);
++		    break;
++			case 9:
++			TakeArena2500(player);
++		    break;
++			case 10:
++			TakeArena5000(player);
++		    break;
++			case 11:
++			TakeArena7500(player);
++		    break;
++			case 12:
++            TakeArena10000(player);
++		    break;
++			case 13:
++			AllGuilds1(player, creature);
++			break;
++			case 14:
++			AllGuilds2(player, creature);
++		    break;
++			case 15:
++			AllGuilds3(player, creature);
++		    break;
++			case 16:
++			AllGuilds4(player, creature);
++		    break;
++			case 17:
++			AllGuilds5(player, creature);
++		    break;
++			case 18:
++			player->CLOSE_GOSSIP_MENU();
++		    break;
++			case 19:
++			AllGuilds1(player, creature);
++		    break;
++			case 20:
++			AllGuilds2(player, creature);
++		    break;
++			case 21:
++			AllGuilds3(player, creature);
++		    break;
++			case 22:
++			AllGuilds4(player, creature);
++		    break;
++			case 23:
++			CurrentSpellsMenu(player, creature);
++			break;
++			case 24:
++			ReplaceColorList(player, creature);
++			break;
++			case 25:
++			ReplaceColor(player, creature, 1);
++			break;
++			case 26:
++			ReplaceColor(player, creature, 2);
++			break;
++			case 27:
++			ReplaceColor(player, creature, 3);
++			break;
++			case 28:
++			ReplaceColor(player, creature, 4);
++			break;
++			case 29:
++			ReplaceColor(player, creature, 5);
++			break;
++			case 30:
++				ReplaceColor(player, creature, 6);
++				break;
++			case 35:
++			TakeTriumphEmblem(player);
++			break;
++			case 36:
++			TakeFrostEmblem(player);
++			break;
++			/*case 9998:
++			BuySpell5(player, creature);
++		    break;
++			case 9900:
++			BuySpell10(player, creature);
++		    break;
++			case 9901:
++			BuySpell15(player, creature);
++		    break;
++			case 9902:
++			BuySpell20(player, creature);
++		    break;
++			case 9903:
++			BuySpell25(player, creature);
++		    break;
++			case 9904:
++			BuySpell30(player, creature);
++		    break;
++			case 9905:
++			CurrentSpellsMenu(player, creature);
++			break;*/
++			case 9000:
++			InvestedRosterGold1(player, creature);
++			break;
++			case 9910:
++			InvestedRosterHonor2(player, creature);
++			break;
++			case 9911:
++			InvestedRosterHonor1(player, creature);
++			break;
++			case 9912:
++			InvestedRosterArena2(player, creature);
++			break;
++			case 9913:
++			InvestedRosterArena1(player, creature);
++			break;
++			case 9914:
++			InvestedRoster(player, creature);
++			break;
++			case 9917:
++			InvestedSvitok(player, creature);
++			break;
++			case 9918:
++			InvestedToken(player, creature);
++			break;
++			case 9915:
++			InvestedRosterHonor1(player, creature);
++			break;
++			case 9916:
++			InvestedRosterArena1(player, creature);
++			break;
++
++		}
++
++		if (action > 100 && action < 1000) AllGuilds1(player, creature);
++		if (action > 1000 && action < 2000) AllGuilds2(player, creature);
++		if (action > 2000 && action < 3000) AllGuilds3(player, creature);
++		if (action > 3000 && action < 4000) AllGuilds4(player, creature);
++		if (action > 4000 && action < 5000) AllGuilds5(player, creature);
++		if (action >= 10000) InvestedRoster(player, creature);
++		
++		/*SelectSpell5(player, creature, action);
++		SelectSpell10(player, creature, action);
++		SelectSpell15(player, creature, action);
++		SelectSpell20(player, creature, action);
++		SelectSpell25(player, creature, action);
++		SelectSpell30(player, creature, action);*/
++
++	return true;
++	}
++	bool OnGossipSelectCode(Player* player, Creature* creature, uint32 sender, uint32 action, char const* code)
++    {
++		switch(action)
++		{
++		case 200:
++			TakeGold(player, creature, code);
++			break;
++		}
++		return true;
++	}
++	
++};
++
++class npc_guildhouse : public CreatureScript
++
++{
++
++    public: 
++
++    npc_guildhouse() : CreatureScript("npc_guildhouse") {}
++
++	bool OnGossipHello(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	uint16 count;
++	if (uint32 guild = player->GetGuildId())
++	{
++	if (player->GetRankFromDB(player->GetGUID()) == 0)
++	{
++		QueryResult result = CharacterDatabase.PQuery("SELECT COUNT(guild) FROM guildhouses WHERE guild = 0");
++		if (result)
++		{
++		    QueryResult result2 = CharacterDatabase.PQuery("SELECT guild FROM guildhouses WHERE guild = %u", guild);
++		    if (!result2)
++			{
++			Field* fields = result->Fetch();
++			count = fields[0].GetUInt16();
++		    if (count > 0)
++		    {
++				std::ostringstream psm;
++                psm << "|TInterface/ICONS/Spell_Arcane_TeleportTheramore:32:32:-18:0|tПосмотреть место для Дома Гильдии";
++				std::ostringstream kpt;
++                kpt << "|TInterface/ICONS/Spell_Arcane_TeleportSilvermoon:32:32:-18:0|tКупить место для Дома Гильдии";
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, psm.str(), GOSSIP_SENDER_MAIN, 1);
++	            player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, kpt.str(), GOSSIP_SENDER_MAIN, 2);
++		    }
++			}
++		}
++		else
++		{
++			player->GetSession()->SendNotification("Свободных мест нет!");
++		    player->CLOSE_GOSSIP_MENU();
++		    return false;
++		}
++	}
++	std::ostringstream tpd;
++    tpd << "|TInterface/ICONS/Spell_Arcane_TeleportThunderBluff:32:32:-18:0|tТелепорт в Дом своей гильдии";
++	QueryResult result5 = CharacterDatabase.PQuery("SELECT guild FROM guildhouses WHERE guild = %u", guild);
++	if (result5) player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, tpd.str(), GOSSIP_SENDER_MAIN, 3);
++
++	std::ostringstream vxd;
++    vxd << "|TInterface/ICONS/Spell_ChargeNegative:32:32:-18:0|tВыход";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, vxd.str(), GOSSIP_SENDER_MAIN, 4);
++	}
++	else
++		{
++			player->SEND_GOSSIP_MENU(55004, creature->GetGUID());
++		    return false;
++		}
++	player->SEND_GOSSIP_MENU(55001, creature->GetGUID());
++
++	return true;
++	}
++	
++	void LookGuildHouses(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(4, "Список доступных ГХ:", GOSSIP_SENDER_MAIN, 200);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, x, y, z, radius, cost, number, number2 FROM guildhouses WHERE guild = 0 ORDER BY cost");
++		if (result) 
++		{
++			float x,y,z,radius;
++			uint32 cost, number, number_2;
++			const char* name;
++			uint16 go = 0;
++			do
++			{
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    x = fields[1].GetFloat();
++			    y = fields[2].GetFloat();
++				z = fields[3].GetFloat();
++			    radius = fields[4].GetFloat();
++			    cost = fields[5].GetUInt32();
++				number = fields[6].GetUInt32();
++				number_2 = fields[7].GetUInt32();
++
++				if (go == 30)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 101);
++			        break;
++				}
++				
++				std::stringstream buffer;
++                buffer << "Посмотреть ГХ: " << "|cff177245" << name << "|r" << ". Цена: " << "|cffE024B4" << cost << " опыта" << "|r";
++			    if (i == 1) player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				if (i == 2) player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number_2);
++
++		        go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void LookGuildHouses2(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(4, "Список доступных ГХ:", GOSSIP_SENDER_MAIN, 201);
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 100);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, x, y, z, radius, cost, number, number2 FROM guildhouses WHERE guild = 0 ORDER BY cost");
++		if (result) 
++		{
++			float x,y,z,radius;
++			uint32 cost, number, number_2;
++			const char* name;
++			uint16 go = 0;
++			do
++			{
++				if (go < 30)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    x = fields[1].GetFloat();
++			    y = fields[2].GetFloat();
++				z = fields[3].GetFloat();
++			    radius = fields[4].GetFloat();
++			    cost = fields[5].GetUInt32();
++				number = fields[6].GetUInt32();
++				number_2 = fields[7].GetUInt32();
++
++				if (go == 60) break;
++				
++				std::stringstream buffer;
++                buffer << "Посмотреть ГХ: " << "|cff177245" << name << "|r" << ". Цена: " << "|cffE024B4" << cost << " опыта" << "|r";
++			    if (i == 1) player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				if (i == 2) player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number_2);
++
++		        go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	uint8 i;
++
++	bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) 
++	{
++            switch (action) 
++			{
++			case 1:
++				i = 1;
++				LookGuildHouses(player, creature);
++				break;
++			case 2:
++				i = 2;
++				LookGuildHouses(player, creature);
++				break;
++			case 3:
++				TeleportToGH(player);
++				break;
++			case 100:
++				LookGuildHouses(player, creature);
++				break;
++			case 101:
++				LookGuildHouses2(player, creature);
++				break;
++			case 4:
++				player->CLOSE_GOSSIP_MENU();
++				break;
++			case 200:
++				LookGuildHouses(player, creature);
++				break;
++			case 201:
++				LookGuildHouses2(player, creature);
++				break;
++            }
++			if (i == 1) TeleportToLook(player, action);
++			if (i == 2) BuyGuildHouse(player, action);
++	return true;
++	}
++
++	void BuyGuildHouse(Player* player, uint32 action)
++	{
++		QueryResult result = CharacterDatabase.PQuery("SELECT number2, cost FROM guildhouses WHERE guild = 0 ORDER BY cost");
++		if (result) 
++		{
++			uint16 level, level_table;
++			uint32 number_2, cost, xp, xp_table;
++			uint32 guild = player->GetGuildId();
++			do
++			{
++				Field* fields = result->Fetch();
++				number_2 = fields[0].GetUInt32();
++				cost = fields[1].GetUInt32();
++
++				if (action == number_2)
++				{
++					
++					QueryResult result2 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		            if (result2)
++					{
++					    Field *fields = result2->Fetch();
++		                level = fields[0].GetUInt16();
++					    xp = fields[1].GetUInt32();
++					    if (xp >= cost)
++						{
++							CharacterDatabase.PQuery("UPDATE guildhouses SET guild = %u WHERE number2 = %u", guild, number_2);
++							CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp - %u WHERE guild = %u", cost, guild);
++							if (!player->HasSpell(69541)) player->learnSpell(69541,false);
++							UpdateLevel(player);
++					        player->GetSession()->SendAreaTriggerMessage("Место для дома гильдии куплено!");
++							ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eВы купили место для дома гильдии. |r");
++							ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eЧтобы начать его обустраивать вызовите пандарена-монаха из списка небоевых спутников.|r");
++					        player->CLOSE_GOSSIP_MENU();
++							break;
++						}
++						else
++						{
++							player->GetSession()->SendNotification("Недостаточно опыта гильдии!");
++							player->CLOSE_GOSSIP_MENU();
++							break;
++						}
++					}
++				}
++				}			
++			while (result->NextRow());
++		}
++	}
++		
++	
++
++	void TeleportToGH(Player* player)
++	{
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT x, y, z, map FROM guildhouses WHERE guild = %u", guild);
++		if (result) 
++		{
++			float x,y,z;
++			uint32 map;
++			std::string name;
++
++				Field* fields = result->Fetch();
++			    x = fields[0].GetFloat();
++			    y = fields[1].GetFloat();
++				z = fields[2].GetFloat();
++				map = fields[3].GetUInt32();
++
++				player->TeleportTo(map,x,y,z,0.0f,0U);
++				player->RemoveSpellCooldown(8690, true);
++				player->SetPhaseMask(1, true);
++		}
++	}
++
++	void TeleportToLook(Player* player, uint32 action)
++	{
++		QueryResult result = CharacterDatabase.PQuery("SELECT x, y, z, map, number, number2 FROM guildhouses WHERE guild = 0 ORDER BY cost");
++		if (result) 
++		{
++			float x,y,z;
++			uint32 number, map;
++			std::string name;
++			do
++			{
++				Field* fields = result->Fetch();
++			    x = fields[0].GetFloat();
++			    y = fields[1].GetFloat();
++				z = fields[2].GetFloat();
++				map = fields[3].GetUInt32();
++				number = fields[4].GetUInt32();
++
++				if (action == number)
++				{
++					player->SaveRecallPosition();
++					player->TeleportTo(map,x,y,z,0.0f,0U);
++					player->RemoveArenaSpellCooldowns();
++					player->RemoveSpellCooldown(8690, true);
++					player->SetPhaseMask(1, true);
++					if (!player->HasSpell(69541)) player->learnSpell(69541,false);
++					ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eВы решили посмотреть место для дома гильдии.|r");
++					ChatHandler(player->GetSession()).PSendSysMessage("|cfff4b25eЧтобы телепортироваться обратно вызовите пандарена-монаха из списка небоевых спутников|r");
++					break;
++				}
++					
++			}
++			while (result->NextRow());
++		}
++	}
++	
++};
++
++class npc_guildhouse_builder : public CreatureScript
++
++{
++
++    public: 
++
++    npc_guildhouse_builder() : CreatureScript("npc_guildhouse_builder") {}
++
++	
++	bool OnGossipHello(Player* player, Creature* creature) {
++	player->PlayerTalkClass->ClearMenus();
++	if (uint32 guild = player->GetGuildId()) {
++		if (player->GetRankFromDB(player->GetGUID()) == 0) {
++		QueryResult haveGuildHouse = CharacterDatabase.PQuery("SELECT * FROM guildhouses WHERE guild = %u", guild);
++		if (haveGuildHouse)
++		{
++	QueryResult result5 = CharacterDatabase.PQuery("SELECT guild FROM guildhouses WHERE guild = %u", guild);
++	std::ostringstream pnp;
++    pnp << "|TInterface/ICONS/Spell_Holy_Rapture:32:32:-18:0|tПоставить НПС";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, pnp.str(), GOSSIP_SENDER_MAIN, 8);
++	std::ostringstream pob;
++    pob << "|TInterface/ICONS/Spell_Nature_NullWard:32:32:-18:0|tПоставить объект";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, pob.str(), GOSSIP_SENDER_MAIN, 1);
++	std::ostringstream dnpc;
++    dnpc << "|TInterface/ICONS/Spell_Shadow_DeathScream:32:32:-18:0|tУдалить поставленного НПС";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, dnpc.str(), GOSSIP_SENDER_MAIN, 9);
++	std::ostringstream danpc;
++    danpc << "|TInterface/ICONS/Spell_Shadow_DeadofNight:32:32:-18:0|tУдалить всех НПС в Доме Гильдии";
++	player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_BATTLE, danpc.str(), GOSSIP_SENDER_MAIN, 11, "Вы действительно хотите удалить всех НПС? Введите 123 для удаления!", 0, true);
++	std::ostringstream dobj;
++    dobj << "|TInterface/ICONS/Spell_Shadow_FingerOfDeath:32:32:-18:0|tУдалить ближайший объект";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE,dobj.str() , GOSSIP_SENDER_MAIN, 2);
++	std::ostringstream daobj;
++    daobj << "|TInterface/ICONS/Spell_Shadow_GrimWard:32:32:-18:0|tУдалить все объекты в Доме Гильдии";
++	player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_BATTLE, daobj.str(), GOSSIP_SENDER_MAIN, 3, "Вы действительно хотите удалить все объекты? Введите 123 для удаления!", 0, true);
++	std::ostringstream prad;
++    prad << "|TInterface/ICONS/Spell_ChargePositive:32:32:-18:0|tРасширить радиус ГХ на 10 ярдов(500 опыта)";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, prad.str(), GOSSIP_SENDER_MAIN, 5);
++	std::ostringstream zst;
++    zst << "|TInterface/ICONS/Spell_Fire_FelHellfire:32:32:-18:0|tЗАСТРЯЛ!";
++	if (result5) player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, zst.str(), GOSSIP_SENDER_MAIN, 7);
++		}
++		else player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Телепортироваться обратно", GOSSIP_SENDER_MAIN, 15);
++		}
++	}
++	else
++	{
++	player->SEND_GOSSIP_MENU(55004, creature->GetGUID());
++	return false;
++	}
++	std::ostringstream vxd;
++    vxd << "|TInterface/ICONS/Spell_ChargeNegative:32:32:-18:0|tВыход";
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, vxd.str(), GOSSIP_SENDER_MAIN, 4);
++	player->SEND_GOSSIP_MENU(55002, creature->GetGUID());
++
++	return true;
++	}
++
++	void AddGobject1(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++				if (go == 30)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 101);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++
++	void AddGobject2(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 100);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 30)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 60)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 102);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject3(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 101);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 60)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 90)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 103);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject4(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 102);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 90)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 120)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 104);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject5(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 103);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 120)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 150)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 105);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject6(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 104);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 150)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 180)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 106);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject7(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 105);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 180)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 210)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 107);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject8(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 106);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 210)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 240)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 108);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject9(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 107);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 240)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 270)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 109);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddGobject10(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 108);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_go ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 270)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 300) break;
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++
++	void AddNPC1(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++				if (go == 30)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 151);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	
++	
++	
++	void AddNPC2(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		//player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 150);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 30)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 60)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 152);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++	
++	void AddNPC3(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 151);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 60)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 90)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 153);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC4(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 152);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 90)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 120)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 154);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC5(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 153);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 120)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 150)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 155);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC6(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 154);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 150)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 180)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 156);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC7(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 155);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 180)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 210)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 157);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC8(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 156);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 210)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 240)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 158);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC9(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 157);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 240)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 270)
++				{
++					player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Дальше", GOSSIP_SENDER_MAIN, 159);
++			        break;
++				}
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void AddNPC10(Player* player, Creature* creature)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "<= Назад", GOSSIP_SENDER_MAIN, 158);
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, cost, number FROM guildhouse_npc ORDER BY name"); 
++ 
++		if (result) 
++		{
++			const char* name;
++			uint32 cost, number;
++			uint16 go = 0;
++			do
++			{
++				if (go < 270)
++				{
++					go++;
++					continue;
++				}
++				Field* fields = result->Fetch();
++			    name = fields[0].GetCString();
++			    cost = fields[1].GetUInt32();
++				number = fields[2].GetUInt32();
++
++				if (go == 300) break;
++
++				std::stringstream buffer;
++                buffer << "Поставить: " << "|cff177245" << name << "|r" << ". Цена: " << "|cff242DFF" << cost << " опыта" << "|r";
++				player->ADD_GOSSIP_ITEM(4, buffer.str().c_str(), GOSSIP_SENDER_MAIN, number);
++				go++;
++			}
++			while (result->NextRow());
++		}
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++
++	}
++
++	void PlusRadius(Player* player)
++	{
++		
++		uint32 guild = player->GetGuildId();
++		QueryResult result15 = CharacterDatabase.PQuery("SELECT * FROM guildhouses WHERE guild = %u", guild);
++		if (!result15)
++		{
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("У вас нет Дома Гильдии!");
++		return;
++		}
++		QueryResult result10 = CharacterDatabase.PQuery("SELECT radius FROM guildhouses WHERE guild = %u AND radius >= 80", guild);
++		                    if (result10)
++							{
++								player->CLOSE_GOSSIP_MENU();
++								player->GetSession()->SendNotification("У вас максимальный радиус ГХ!");
++								return;
++							}
++		uint32 level_table, xp_table, xp;
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT xp FROM guild_level WHERE guild = %u", guild);
++		            if (result2)
++					{
++					    Field *fields = result2->Fetch();
++					    xp = fields[0].GetUInt32();
++					}
++					if (xp < 500)
++					{
++						player->CLOSE_GOSSIP_MENU();
++						player->GetSession()->SendNotification("Недостаточно гильдейского опыта!");
++						return;
++					}
++		CharacterDatabase.PQuery("UPDATE guildhouses SET radius = radius+10 WHERE guild = %u", guild);
++		player->GetSession()->SendAreaTriggerMessage("Радиус вашего дома гильдии расширен на 10 ярдов!");
++        CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp-500 WHERE guild = %u", guild);
++
++		UpdateLevel(player);
++	}
++
++	void DeleteAllGobjects(Player* player, Creature* creature, char const* code)
++	{
++		
++		uint32 da = atoi(code);
++		if (da != 123) return;
++		uint32 lowguid;
++		uint64 leader_guid = player->GetGUID();
++		QueryResult result = CharacterDatabase.PQuery("SELECT guid FROM guildhouse_spawned WHERE leader_guid = %u", leader_guid);
++		if (!result)
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("Вы не поставили не единого объекта!");
++		    return;
++		}
++		if (result) 
++		{
++			do
++			{
++			Field* fields = result->Fetch();
++			lowguid = fields[0].GetUInt32();
++				if(!lowguid)
++            return;
++		
++        GameObject* obj = NULL;
++        // by DB guid
++        if(GameObjectData const* go_data = sObjectMgr->GetGOData(lowguid))
++            obj = ChatHandler(player->GetSession()).GetObjectGlobalyWithGuidOrNearWithDbGuid(lowguid, go_data->id);
++
++        if(!obj)
++        {
++            ChatHandler(player->GetSession()).PSendSysMessage(LANG_COMMAND_OBJNOTFOUND, lowguid);
++            ChatHandler(player->GetSession()).SetSentErrorMessage(true);
++            return;
++        }
++
++		QueryResult res = CharacterDatabase.PQuery("SELECT cost FROM guildhouse_go WHERE id = %u", obj->GetEntry());
++		if (res)
++		{
++		Field* ff = res->Fetch();
++		uint32 cost = ff[0].GetUInt32();
++		
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+%u WHERE guild = %u",cost ,player->GetGuildId());
++		UpdateLevel(player);
++		}
++		
++        uint64 owner_guid = obj->GetOwnerGUID();
++        if(owner_guid)
++        {
++            Unit* owner = ObjectAccessor::GetUnit(*ChatHandler(player->GetSession()).GetSession()->GetPlayer(), owner_guid);
++            if(!owner || !IS_PLAYER_GUID(owner_guid))
++            {
++                ChatHandler(player->GetSession()).PSendSysMessage(LANG_COMMAND_DELOBJREFERCREATURE, GUID_LOPART(owner_guid), obj->GetGUIDLow());
++                ChatHandler(player->GetSession()).SetSentErrorMessage(true);
++                return;
++            }
++
++            owner->RemoveGameObject(obj, false);
++        }
++
++        obj->SetRespawnTime(0);                                 // not save respawn time
++        obj->Delete();
++        obj->DeleteFromDB();
++
++		player->CLOSE_GOSSIP_MENU();
++			}
++			while (result->NextRow());
++			CharacterDatabase.PQuery("DELETE FROM guildhouse_spawned WHERE leader_guid = %u", leader_guid);
++			ChatHandler(player->GetSession()).PSendSysMessage("Объекты были успешно удалены!");
++		}
++	}
++
++	void DeleteAllNPC(Player* player, Creature* creature, char const* code)
++	{
++		
++		uint32 da = atoi(code);
++		if (da != 123) return;
++		uint32 lowguid;
++		uint64 leader_guid = player->GetGUID();
++		QueryResult result = CharacterDatabase.PQuery("SELECT guid FROM guildhouse_npc_spawned WHERE leader_guid = %u", leader_guid);
++		if (!result)
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("Вы не поставили не единого НПС!");
++		    return;
++		}
++		if (result) 
++		{
++			do
++			{
++			Field* fields = result->Fetch();
++			lowguid = fields[0].GetUInt32();
++			if(!lowguid) return;
++		Creature* unit = NULL;
++        if(CreatureData const* cr_data = sObjectMgr->GetCreatureData(lowguid))
++                unit = player->GetMap()->GetCreature(MAKE_NEW_GUID(lowguid, cr_data->id, HIGHGUID_UNIT));
++				
++		QueryResult res = CharacterDatabase.PQuery("SELECT cost FROM guildhouse_npc WHERE id = %u", unit->GetEntry());
++		if (res)
++		{
++		Field* ff = res->Fetch();
++		uint32 cost = ff[0].GetUInt32();
++		
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+%u WHERE guild = %u",cost ,player->GetGuildId());
++		UpdateLevel(player);
++		}
++
++        if(!unit || unit->IsPet() || unit->IsTotem()) return;
++
++        // Delete the creature
++        unit->CombatStop();
++        unit->DeleteFromDB();
++        unit->AddObjectToRemoveList();
++		CharacterDatabase.PQuery("DELETE FROM guildhouse_npc_spawned WHERE guid = %u", lowguid);
++
++		player->GetSession()->SendAreaTriggerMessage("НПС успешно удален!");
++
++		player->CLOSE_GOSSIP_MENU();
++			}
++			while (result->NextRow());
++			CharacterDatabase.PQuery("DELETE FROM guildhouse_npc_spawned WHERE leader_guid = %u", leader_guid);
++			ChatHandler(player->GetSession()).PSendSysMessage("НПС были успешно удалены!");
++		}
++	}
++
++	void DeleteNPC(Player* player, Creature* creature)
++	{
++		
++		Creature* unit = player->GetSelectedUnit()->ToCreature();
++
++		uint32 leader_guid = player->GetGUIDLow();
++		uint64 lowguid = unit->GetGUIDLow();;
++
++
++		QueryResult result = CharacterDatabase.PQuery("SELECT guid, leader_guid FROM guildhouse_npc_spawned WHERE leader_guid = %u AND guid = %u", leader_guid, lowguid);
++		if (!result) 
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("НПС с таким номером не найден!", lowguid, leader_guid);
++		    return;
++		}
++		
++        if(!unit || unit->IsPet() || unit->IsTotem()) return;
++
++		QueryResult res = CharacterDatabase.PQuery("SELECT cost FROM guildhouse_npc WHERE id = %u", unit->GetEntry());
++		if (res)
++		{
++		Field* ff = res->Fetch();
++		uint32 cost = ff[0].GetUInt32();
++		
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+%u WHERE guild = %u",cost ,player->GetGuildId());
++		UpdateLevel(player);
++		}
++		
++        // Delete the creature
++        unit->CombatStop();
++        unit->DeleteFromDB();
++        unit->AddObjectToRemoveList();
++		CharacterDatabase.PQuery("DELETE FROM guildhouse_npc_spawned WHERE guid = %u", lowguid);
++
++		player->GetSession()->SendAreaTriggerMessage("НПС успешно удален!");
++		player->CLOSE_GOSSIP_MENU();
++	}
++	
++	void ActivateGobject(Player* player, Creature* creature)
++	{
++        QueryResult result;
++		GameEventMgr::ActiveEvents const& activeEventsList = sGameEventMgr->GetActiveEventList();
++
++		std::ostringstream eventFilter;
++            eventFilter << " AND (eventEntry IS NULL ";
++            bool initString = true;
++
++            for (GameEventMgr::ActiveEvents::const_iterator itr = activeEventsList.begin(); itr != activeEventsList.end(); ++itr)
++            {
++                if (initString)
++                {
++                    eventFilter  <<  "OR eventEntry IN (" << *itr;
++                    initString = false;
++                }
++                else
++                    eventFilter << ',' << *itr;
++            }
++
++            if (!initString)
++                eventFilter << "))";
++            else
++                eventFilter << ')';
++		result = WorldDatabase.PQuery("SELECT gameobject.guid, id, position_x, position_y, position_z, orientation, map, phaseMask, "
++                "(POW(position_x - %f, 2) + POW(position_y - %f, 2) + POW(position_z - %f, 2)) AS order_ FROM gameobject "
++                "LEFT OUTER JOIN game_event_gameobject on gameobject.guid = game_event_gameobject.guid WHERE map = '%i' %s ORDER BY order_ ASC LIMIT 10",
++                player->GetPositionX(), player->GetPositionY(), player->GetPositionZ(), player->GetMapId(), eventFilter.str().c_str());
++
++		if (!result)
++        {
++			player->GetSession()->SendNotification("Поблизости не найдено объектов вашего Дома Гильдии!");
++            return;
++        }
++
++        bool found = false;
++        float x, y, z, o;
++        uint32 guidLow, id, phase;
++        uint16 mapId;
++
++        do
++        {
++            Field* fields = result->Fetch();
++            guidLow = fields[0].GetUInt32();
++            id =      fields[1].GetUInt32();
++            x =       fields[2].GetFloat();
++            y =       fields[3].GetFloat();
++            z =       fields[4].GetFloat();
++            o =       fields[5].GetFloat();
++            mapId =   fields[6].GetUInt16();
++            phase =   fields[7].GetUInt32();
++			QueryResult result15 = CharacterDatabase.PQuery("SELECT guid FROM guildhouse_spawned WHERE leader_guid = %u AND guid = %u", player->GetGUIDLow(), guidLow);
++            if (result15) found = true;
++        } while (result->NextRow() && !found);
++
++        if (!found)
++        {
++			//player->GetSession()->SendNotification(LANG_GAMEOBJECT_NOT_EXIST);
++            return;
++        }
++
++        GameObjectTemplate const* objectInfo = sObjectMgr->GetGameObjectTemplate(id);
++
++        if (!objectInfo)
++        {
++           // player->GetSession()->SendNotification(LANG_GAMEOBJECT_NOT_EXIST);
++            return;
++        }
++
++        GameObject* target = player->GetMap()->GetGameObject(MAKE_NEW_GUID(guidLow, id, HIGHGUID_GAMEOBJECT));
++
++        if (target)
++        {
++		QueryResult res = CharacterDatabase.PQuery("SELECT cost FROM guildhouse_go WHERE id = %u", target->GetEntry());
++		if (res)
++		{
++		Field* ff = res->Fetch();
++		uint32 cost = ff[0].GetUInt32();
++		
++		CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp+%u WHERE guild = %u",cost ,player->GetGuildId());
++		UpdateLevel(player);
++		}
++		
++		target->SetRespawnTime(0);
++        target->Delete();
++        target->DeleteFromDB();
++		player->GetSession()->SendAreaTriggerMessage("Объект успешно удален!");
++		CharacterDatabase.PQuery("DELETE FROM guildhouse_spawned WHERE guid = %u AND leader_guid = %u", guidLow, player->GetGUIDLow());
++		}
++        
++
++
++		player->CLOSE_GOSSIP_MENU();
++	}
++
++	void SpawnNPC(Player* player, Creature* creature, uint32 action)
++	{
++		
++		uint64 leader_guid = player->GetGUID();
++		float x_p,y_p,z_p, radius;
++		float p_x = player->GetPositionX();
++		float p_y = player->GetPositionY();
++		float p_z = player->GetPositionZ();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT id, number, cost FROM guildhouse_npc ORDER BY cost");
++		if (result)
++		{
++			uint32 number, id, cost, level, xp, level_table, xp_table;
++			do
++			{
++				Field* fields = result->Fetch();
++				id = fields[0].GetUInt32();
++				number = fields[1].GetUInt32();
++				cost = fields[2].GetUInt32();
++
++				if (action == number)
++				{
++		QueryResult result10 = CharacterDatabase.PQuery("SELECT x, y, z, radius FROM guildhouses WHERE guild = %u", guild);
++		if (result10)
++		{
++			Field* fields = result10->Fetch();
++			x_p = fields[0].GetFloat();
++		    y_p = fields[1].GetFloat();
++			z_p = fields[2].GetFloat();
++			radius = fields[3].GetFloat();
++		}
++		if (!result10)
++		{
++            player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("У вас нет гильдхауса!");
++			return;
++		}
++		if (p_x > x_p+radius || p_x < x_p-radius || p_y > y_p+radius || p_y < y_p-radius || p_z > z_p+radius || p_z < z_p-radius)
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("Вы не в своем ГХ!");
++			return;
++		}
++
++					QueryResult result2 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		            if (result2)
++					{
++						Field* fields = result2->Fetch();
++				        level = fields[0].GetUInt32();
++				        xp = fields[1].GetUInt32();
++					}
++					if (cost > xp)
++					{
++						player->GetSession()->SendNotification("Недостаточно гильдейского опыта!");
++						return;
++					}
++		Player* chr = player;
++        float x = chr->GetPositionX();
++        float y = chr->GetPositionY();
++        float z = chr->GetPositionZ();
++        float o = chr->GetOrientation();
++        Map *map = chr->GetMap();
++
++        Creature* creature1 = new Creature;
++        if(!creature1->Create(sObjectMgr->GenerateLowGuid(HIGHGUID_UNIT), map, chr->GetPhaseMaskForSpawn(), id, 0, chr->GetTeam(), x, y, z, o))
++        {
++            delete creature1;
++            return;
++        }
++
++        creature1->SaveToDB(map->GetId(), (1 << map->GetSpawnMode()), chr->GetPhaseMaskForSpawn());
++
++        uint32 db_guid = creature1->GetDBTableGUIDLow();
++
++        // To call _LoadGoods(); _LoadQuests(); CreateTrainerSpells();
++        creature1->LoadFromDB(db_guid, map);
++
++		map->AddToMap(creature1);
++        sObjectMgr->AddCreatureToGrid(db_guid, sObjectMgr->GetCreatureData(db_guid));
++
++					CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp - %u WHERE guild = %u", cost, guild);
++
++					CharacterDatabase.PQuery("REPLACE INTO guildhouse_npc_spawned (guid, leader_guid) VALUES (%u, %u)", db_guid, leader_guid);
++
++					UpdateLevel(player);
++	
++				    AddNPC1(player, creature);
++					break;
++				}
++					
++			}
++			while (result->NextRow());
++		}
++	}
++	
++	void Recall(Player* player)
++	{
++		player->TeleportTo(player->m_recallMap, player->m_recallX, player->m_recallY, player->m_recallZ, player->m_recallO);
++	}
++
++	void SpawnGobject(Player* player, Creature* creature, uint32 action)
++	{
++		
++		uint64 leader_guid = player->GetGUID();
++		float x_p,y_p,z_p, radius;
++		float p_x = player->GetPositionX();
++		float p_y = player->GetPositionY();
++		float p_z = player->GetPositionZ();
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT id, number, cost FROM guildhouse_go ORDER BY cost");
++		if (result)
++		{
++			uint32 number, id, cost, level, xp, level_table, xp_table;
++			do
++			{
++				Field* fields = result->Fetch();
++				id = fields[0].GetUInt32();
++				number = fields[1].GetUInt32();
++				cost = fields[2].GetUInt32();
++
++				if (action == number)
++				{
++		QueryResult result10 = CharacterDatabase.PQuery("SELECT x, y, z, radius FROM guildhouses WHERE guild = %u", guild);
++		if (result10)
++		{
++			Field* fields = result10->Fetch();
++			x_p = fields[0].GetFloat();
++		    y_p = fields[1].GetFloat();
++			z_p = fields[2].GetFloat();
++			radius = fields[3].GetFloat();
++		}
++		if (!result10)
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("У вас нет гильдхауса!");
++			return;
++		}
++		if (p_x > x_p+radius || p_x < x_p-radius || p_y > y_p+radius || p_y < y_p-radius || p_z > z_p+radius || p_z < z_p-radius)
++		{
++			player->CLOSE_GOSSIP_MENU();
++			player->GetSession()->SendNotification("Вы не в своем ГХ!");
++			return;
++		}
++
++					QueryResult result2 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_level WHERE guild = %u", guild);
++		            if (result2)
++					{
++						Field* fields = result2->Fetch();
++				        level = fields[0].GetUInt32();
++				        xp = fields[1].GetUInt32();
++					}
++					if (cost > xp)
++					{
++						player->GetSession()->SendNotification("Недостаточно гильдейского опыта!");
++						return;
++					}
++					const GameObjectTemplate *gInfo = sObjectMgr->GetGameObjectTemplate(id);
++					if(!gInfo)
++                    {
++						player->GetSession()->SendNotification("Неверный ID");
++                        return;
++                    }
++					Player* chr = player;
++					float x = float(chr->GetPositionX());
++                    float y = float(chr->GetPositionY());
++                    float z = float(chr->GetPositionZ());
++                    float o = float(chr->GetOrientation());
++                    Map *map = chr->GetMap();
++					GameObject* pGameObj = new GameObject;
++					uint32 db_lowGUID = sObjectMgr->GenerateLowGuid(HIGHGUID_GAMEOBJECT);
++					if(!pGameObj->Create(db_lowGUID, gInfo->entry, map, chr->GetPhaseMaskForSpawn(), x, y, z, o, 0.0f, 0.0f, 0.0f, 0.0f, 0, GO_STATE_READY))
++                    {
++
++                        delete pGameObj;
++                        return;
++                    }
++					pGameObj->SaveToDB(map->GetId(), (1 << map->GetSpawnMode()), chr->GetPhaseMaskForSpawn());
++					if(!pGameObj->LoadFromDB(db_lowGUID, map))
++                    {
++                        delete pGameObj;
++                        return;
++                    }
++					map->AddToMap(pGameObj);
++					sObjectMgr->AddGameobjectToGrid(db_lowGUID, sObjectMgr->GetGOData(db_lowGUID));
++
++					CharacterDatabase.PQuery("UPDATE guild_level SET xp = xp - %u WHERE guild = %u", cost, guild);
++
++					CharacterDatabase.PQuery("REPLACE INTO guildhouse_spawned (guid, leader_guid) VALUES (%u, %u)", db_lowGUID, leader_guid);
++
++
++					QueryResult result3 = CharacterDatabase.PQuery("SELECT level, xp FROM guild_xp_table ORDER BY xp DESC");
++		                    if (result3)
++							{
++								do
++								{
++									Field *fields = result3->Fetch();
++									level_table = fields[0].GetUInt32();
++									xp_table = fields[1].GetUInt32();
++									if ((xp - cost) < xp_table) continue;
++									else if ((xp - cost) < 100)
++									{
++										CharacterDatabase.PQuery("UPDATE guild_level SET level = 1 WHERE guild = %u", guild);
++										break;
++									}
++									else
++									{
++										CharacterDatabase.PQuery("UPDATE guild_level SET level = %u WHERE guild = %u", level_table, guild);
++										break;
++									}
++								}
++								while (result3->NextRow());
++							}
++                    AddGobject1(player, creature);
++					break;
++				}
++					
++			}
++			while (result->NextRow());
++		}
++	}
++
++	bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) 
++	{
++            switch (action) 
++			{
++			case 8:
++				AddNPC1(player, creature);
++				break;
++			case 1:
++				AddGobject1(player, creature);
++				break;
++			case 100:
++				AddGobject1(player, creature);
++				break;
++			case 101:
++				AddGobject2(player, creature);
++				break;
++				case 102:
++				AddGobject3(player, creature);
++				break;
++				case 103:
++				AddGobject4(player, creature);
++				break;
++				case 104:
++				AddGobject5(player, creature);
++				break;
++				case 105:
++				AddGobject6(player, creature);
++				break;
++				case 106:
++				AddGobject7(player, creature);
++				break;
++				case 107:
++				AddGobject8(player, creature);
++				break;
++				case 108:
++				AddGobject9(player, creature);
++				break;
++				case 109:
++				AddGobject10(player, creature);
++				break;
++				case 150:
++				AddNPC1(player, creature);
++				break;
++			    case 151:
++				AddNPC2(player, creature);
++				break;
++				case 152:
++				AddNPC3(player, creature);
++				break;
++				case 153:
++				AddNPC4(player, creature);
++				break;
++				case 154:
++				AddNPC5(player, creature);
++				break;
++				case 155:
++				AddNPC6(player, creature);
++				break;
++				case 156:
++				AddNPC7(player, creature);
++				break;
++				case 157:
++				AddNPC8(player, creature);
++				break;
++				case 158:
++				AddNPC9(player, creature);
++				break;
++				case 159:
++				AddNPC10(player, creature);
++				break;
++			case 2:
++			ActivateGobject(player, creature);
++			break;
++			case 4:
++				player->CLOSE_GOSSIP_MENU();
++				break;
++			case 5:
++                PlusRadius(player);
++				player->CLOSE_GOSSIP_MENU();
++				break;
++			case 7:
++				TeleportToGH(player);
++				break;
++			case 9:
++				DeleteNPC(player, creature);
++				break;
++			case 15:
++				Recall(player);
++				break;
++            }
++			if (action >= 10000) SpawnNPC(player, creature, action);
++			else SpawnGobject(player, creature, action);
++			
++	return true;
++	}
++
++	void TeleportToGH(Player* player)
++	{
++		
++		uint32 guild = player->GetGuildId();
++		QueryResult result = CharacterDatabase.PQuery("SELECT x, y, z, map, radius FROM guildhouses WHERE guild = %u", guild);
++		if (result) 
++		{
++			float x,y,z,radius;
++			float p_x = player->GetPositionX();
++			float p_y = player->GetPositionY();
++			float p_z = player->GetPositionZ();
++			uint32 map;
++			std::string name;
++
++				Field* fields = result->Fetch();
++			    x = fields[0].GetFloat();
++			    y = fields[1].GetFloat();
++				z = fields[2].GetFloat();
++				map = fields[3].GetUInt32();
++				radius = fields[4].GetFloat();
++
++				if (p_x > x+radius || p_x < x-radius || p_y > y+radius || p_y < y-radius || p_z > z+radius || p_z < z-radius)
++				{
++					player->CLOSE_GOSSIP_MENU();
++					player->GetSession()->SendNotification("Вы не в своем ГХ!");
++					return; 
++				}
++				player->TeleportTo(map,x,y,z,0.0f,0U);
++		}
++	}
++
++	bool OnGossipSelectCode(Player* player, Creature* creature, uint32 sender, uint32 action, char const* code)
++    {
++		switch(action)
++		{
++        case 3:
++			DeleteAllGobjects(player, creature, code);
++			break;
++		case 11:
++			DeleteAllNPC(player, creature, code);
++			break;
++		}
++		return true;
++	}
++
++};
++
++class npc_guildspell : public CreatureScript
++{
++public:
++	npc_guildspell() : CreatureScript("npc_guildspell") { }
++
++	uint8 IsSpell;
++
++	bool OnGossipHello(Player* player, Creature* creature)
++    {
++		player->PlayerTalkClass->ClearMenus();
++		
++		if (player->GetRankFromDB(player->GetGUID()) == 0 && player->GetGuildId())
++		{
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Купить гильдейское заклинание.", GOSSIP_SENDER_MAIN, 99000);
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Купить гильдейское звание.", GOSSIP_SENDER_MAIN, 99002);
++		}
++		
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_BATTLE, "Выход.", GOSSIP_SENDER_MAIN, 99001);
++		
++		player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++		
++		return true;
++	}
++	
++	void BuySpellOrTitle(Player* player, Creature* creature, uint8 isSpell) {
++	player->PlayerTalkClass->ClearMenus();
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TALK, "Список доступных спеллов или званий:", GOSSIP_SENDER_MAIN, 99005);
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	const char* name;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spellortitle, cost, number FROM guild_level_spell WHERE isSpell = %u", isSpell);
++	if (result) {
++	do {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	if (isSpell == 1)
++	{
++		if (player->HasSpell(spell)) continue;
++
++		const SpellEntry* spellEntry = sSpellStore.LookupEntry(spell);
++		name = (spellEntry->SpellName[8]);
++	}
++	else
++	{
++		const CharTitlesEntry* titleEntry = sCharTitlesStore.LookupEntry(spell);
++		if (player->HasTitle(titleEntry)) continue;
++
++		name = (const char*)titleEntry->name[8];
++	}
++	std::stringstream buffer;
++    buffer << "|cff084E13" << name << "|r" << ". Стоимость: " << "|cFF1E90FF" << cost << " эмблем." << "|r";
++
++	player->ADD_GOSSIP_ITEM(GOSSIP_ICON_TRAINER, buffer.str(), GOSSIP_SENDER_MAIN, number);
++	}
++	
++	while (result->NextRow());
++
++	IsSpell = isSpell;
++
++	player->SEND_GOSSIP_MENU(DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
++	}
++	}
++	
++	void SelectSpellOrTitle(Player* player, Creature* creature, uint32 action) {
++	uint32 spell;
++	uint32 cost;
++	uint32 number;
++	uint32 guild = player->GetGuildId();
++	uint64 guid;
++	QueryResult result = CharacterDatabase.PQuery("SELECT spellortitle, cost, number FROM guild_level_spell WHERE isSpell = %u AND number = %u", IsSpell, action);
++	if (result) {
++	Field* fields = result->Fetch();
++	spell = fields[0].GetUInt32();
++	cost = fields[1].GetUInt32();
++	number = fields[2].GetUInt32();
++	
++	if (number == action) {
++		// learn spell
++		
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT guid FROM guild_member WHERE guildid = %u", guild);
++	    if (result2) {
++		
++		if (!player->HasItemCount(49426, cost))
++		{
++		player->CLOSE_GOSSIP_MENU();
++		player->GetSession()->SendNotification("Недостаточно эмблем!");
++		return;
++		}
++
++		do {
++	    Field* fields = result2->Fetch();
++	    guid = fields[0].GetUInt64();
++		if (Player* onlinePlayer = sObjectAccessor->FindPlayer(guid)) {
++			if (IsSpell == 1) onlinePlayer->learnSpell(spell, false);
++			else onlinePlayer->SetTitle(sCharTitlesStore.LookupEntry(spell));
++		}
++
++		CharacterDatabase.PQuery("REPLACE INTO guild_learn_spell (guild, spellortitle, isSpell) VALUES (%u, %u, %u)", guild, spell, IsSpell);
++		
++		}
++		while (result2->NextRow());
++		
++		}
++		player->DestroyItemCount(49426, cost, true);
++		// learn spell
++		player->CLOSE_GOSSIP_MENU();
++		if (IsSpell == 1) player->GetSession()->SendAreaTriggerMessage("Гильдейское заклинание успешно куплено!");
++		else player->GetSession()->SendAreaTriggerMessage("Гильдейское звание успешно куплено!");
++	}
++
++	}
++	
++	}
++	
++	bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action)
++	{
++		switch(action)
++		{
++			case 99000:
++			BuySpellOrTitle(player, creature, 1);
++			break;
++			case 99002:
++			BuySpellOrTitle(player, creature, 0);
++			break;
++			case 99001:
++			player->CLOSE_GOSSIP_MENU();
++			break;
++			case 99005:
++			OnGossipHello(player, creature);
++			break;
++			
++		}
++		if (action < 5000) SelectSpellOrTitle(player, creature, action);
++	
++		return true;
++	}
++	
++	
++};
++
++class Login_spellguild : public PlayerScript
++{
++public:
++	Login_spellguild() : PlayerScript("Login_spellguild") { }
++	void OnLogin(Player* player/*, bool firstLogin*/)
++	{
++		uint32 guild = player->GetGuildId();
++
++		if (!guild) return;
++
++		QueryResult result = CharacterDatabase.PQuery("SELECT spellortitle FROM guild_learn_spell WHERE guild = %u And isSpell = 1", guild);
++		if (result)
++		{
++			do 
++			{
++				Field* fields = result->Fetch();
++	            uint32 spell = fields[0].GetUInt32();
++
++				if (!player->HasSpell(spell)) player->learnSpell(spell, false);
++			}
++			while (result->NextRow());
++		}
++		else
++		{
++		QueryResult result2 = CharacterDatabase.PQuery("SELECT spellortitle FROM guild_level_spell WHERE isSpell = 1");
++		if (result2)
++		{
++			do {
++				Field* fields = result2->Fetch();
++	            uint32 Spell = fields[0].GetUInt32();
++
++				if (player->HasSpell(Spell)) player->removeSpell(Spell);
++			}
++			while (result2->NextRow());
++		}
++		}
++
++		QueryResult result3 = CharacterDatabase.PQuery("SELECT spellortitle FROM guild_learn_spell WHERE guild = %u And isSpell = 0", guild);
++		if (result3)
++		{
++			do 
++			{
++				Field* fields = result3->Fetch();
++	            uint32 title = fields[0].GetUInt32();
++
++				if (!player->HasTitle(sCharTitlesStore.LookupEntry(title))) player->SetTitle(sCharTitlesStore.LookupEntry(title));
++			}
++			while (result3->NextRow());
++		}
++		else
++		{
++		QueryResult result4 = CharacterDatabase.PQuery("SELECT spellortitle FROM guild_level_spell WHERE isSpell = 0");
++		if (result4)
++		{
++			do {
++				Field* fields = result4->Fetch();
++	            uint32 title = fields[0].GetUInt32();
++
++				if (player->HasTitle(sCharTitlesStore.LookupEntry(title)))
++				{
++					player->SetTitle(sCharTitlesStore.LookupEntry(title), true);
++					if (!player->HasTitle(player->GetInt32Value(PLAYER_CHOSEN_TITLE))) player->SetUInt32Value(PLAYER_CHOSEN_TITLE, 0);	
++				}
++			}
++			while (result4->NextRow());
++		}
++		}
++	}
++};
++
++class guildMasterChat : public PlayerScript
++{
++public:
++        guildMasterChat() : PlayerScript("guildMasterChat") {}
++ 
++        void OnChat(Player* player, uint32 /*type*/, uint32 lang, std::string& msg, Guild* guild)
++        {
++			if (player->GetRank() == 0) msg = "|cFFFFD700" + msg + "|r";
++        }
++		
++};
++
++
+ void AddSC_account_commandscript()
+ {
+     new account_commandscript();
++	new item_tpguild();
++	new npc_guild_level();
++	new npc_guildhouse();
++	new npc_guildhouse_builder();
++	new npc_guildspell();
++	new Login_spellguild();
++	new guildMasterChat();
+ }

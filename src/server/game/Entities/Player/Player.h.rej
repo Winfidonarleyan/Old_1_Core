@@ -1,0 +1,10 @@
+--- src/server/game/Entities/Player/Player.h
++++ src/server/game/Entities/Player/Player.h
+@@ -2053,7 +2079,6 @@
+         void SetBattlegroundEntryPoint();
+ 
+         void SetBGTeam(uint32 team);
+-        uint32 GetBGTeam() const;
+ 
+         void LeaveBattleground(bool teleportToEntryPoint = true);
+         bool CanJoinToBattleground(Battleground const* bg) const;

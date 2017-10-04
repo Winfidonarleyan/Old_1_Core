@@ -1,0 +1,58 @@
+--- src/server/game/Battlegrounds/Battleground.cpp
++++ src/server/game/Battlegrounds/Battleground.cpp
+@@ -317,7 +317,7 @@
+             if (Player* player = ObjectAccessor::FindPlayer(itr->first))
+             {
+                 player->GetPosition(&pos);
+-                GetTeamStartLoc(player->GetBGTeam(), x, y, z, o);
++                GetTeamStartLoc(player->GetTeam(), x, y, z, o);
+                 if (pos.GetExactDistSq(x, y, z) > maxDist)
+                 {
+                     TC_LOG_DEBUG(LOG_FILTER_BATTLEGROUND, "BATTLEGROUND: Sending %s back to start location (map: %u) (possible exploit)", player->GetName().c_str(), GetMapId());
+@@ -523,7 +523,7 @@
+                     WorldPacket status;
+                     BattlegroundQueueTypeId bgQueueTypeId = sBattlegroundMgr->BGQueueTypeId(m_TypeID, GetArenaType());
+                     uint32 queueSlot = player->GetBattlegroundQueueIndex(bgQueueTypeId);
+-                    sBattlegroundMgr->BuildBattlegroundStatusPacket(&status, this, queueSlot, STATUS_IN_PROGRESS, 0, GetStartTime(), GetArenaType(), player->GetBGTeam());
++                    sBattlegroundMgr->BuildBattlegroundStatusPacket(&status, this, queueSlot, STATUS_IN_PROGRESS, 0, GetStartTime(), GetArenaType(), player->GetTeam());
+                     player->GetSession()->SendPacket(&status);
+ 
+                     player->RemoveAurasDueToSpell(SPELL_ARENA_PREPARATION);
+@@ -939,7 +959,7 @@
+         player->GetSession()->SendPacket(&pvpLogData);
+ 
+         WorldPacket data;
+-        sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, this, player->GetBattlegroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, TIME_TO_AUTOREMOVE, GetStartTime(), GetArenaType(), player->GetBGTeam());
++        sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, this, player->GetBattlegroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, TIME_TO_AUTOREMOVE, GetStartTime(), GetArenaType(), player->GetTeam());
+         player->GetSession()->SendPacket(&data);
+         player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_COMPLETE_BATTLEGROUND, 1);
+     }
+@@ -1219,6 +1240,8 @@
+     // setup BG group membership
+     PlayerAddedToBGCheckIfBGIsRunning(player);
+     AddOrSetPlayerToCorrectBgGroup(player, team);
++
++    player->FitPlayerInTeam(true, this);
+ }
+ 
+ // this method adds player to his team's bg group, or sets his correct group if player is already in bg group
+@@ -1288,8 +1311,8 @@
+ 
+         // 1 player is logging out, if it is the last, then end arena!
+         if (isArena())
+-            if (GetAlivePlayersCountByTeam(player->GetBGTeam()) <= 1 && GetPlayersCountByTeam(GetOtherTeam(player->GetBGTeam())))
+-                EndBattleground(GetOtherTeam(player->GetBGTeam()));
++            if (GetAlivePlayersCountByTeam(player->GetTeam()) <= 1 && GetPlayersCountByTeam(GetOtherTeam(player->GetTeam())))
++                EndBattleground(GetOtherTeam(player->GetTeam()));
+     }
+ }
+ 
+@@ -1860,7 +1883,7 @@
+     sBattlegroundMgr->BuildPvpLogDataPacket(&data, this);
+     player->GetSession()->SendPacket(&data);
+ 
+-    sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, this, player->GetBattlegroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, GetEndTime(), GetStartTime(), GetArenaType(), player->GetBGTeam());
++    sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, this, player->GetBattlegroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, GetEndTime(), GetStartTime(), GetArenaType(), player->GetTeam());
+     player->GetSession()->SendPacket(&data);
+ }
+ 
